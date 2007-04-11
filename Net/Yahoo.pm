@@ -8,9 +8,20 @@ package Net::Yahoo;
 
 use strict;
 use warnings;
+use LWP::UserAgent;
+use Data::Dumper;
 
 # IO
 use IO::Select;
+use IO::Socket::INET;
+
+# coloring for console
+use Term::ANSIColor;
+$Term::ANSIColor::AUTORESET = 1;
+require Win32::Console::ANSI if($^O eq "MSWin32");
+
+use Net::Yahoo::Util;
+
 
 # this is the seporator used in yahoo packets
 my $sep = "\xC0\x80";
@@ -57,7 +68,7 @@ sub new
 	    @_
 	};
 	bless( $self, $class );
-	return $self;
+    return $self;
 }
 
 sub DESTROY
@@ -105,10 +116,25 @@ Connect to Yahoo. Call this after your object is created and your event handlers
 sub connect
 {
     my $self = shift;
-
     # if success set a varrible fo uptime stats
     $self->{Connected} = time;
-    $self->call_event( $self, 'connected', $self->{Connected});
+
+    $self->{socket} = new IO::Socket::INET->new(
+    						PeerAddr => $self->{Host},
+                            PeerPort => $self->{Port},
+                            Proto => 'tcp') or die "Couldn't connect!";
+
+    $self->{Select}->add($self->{socket});
+
+	$self->send_packet({
+    		'Status' => 0,
+	        'SessionID' => 48,
+	        'Version' => 12,
+	        'ServiceCode' => 76,
+	        'data' => ''
+	    });
+
+    #$self->call_event( $self, 'connected', $self->{Connected});
 }
 
 =item
@@ -165,9 +191,36 @@ Process a single cycle's worth of incoming and outgoing messages.  This should b
 
 sub do_one_loop
 {
-                my $self = shift;
-                # return immediately if we are not connected
-                return if( !$self->{Connected} );
+	my $self = shift;
+	my $pack;
+    my $data;
+    my $in;
+    # return immediately if we are not connected
+	return if( !$self->{Connected} );
+
+    select ( undef, undef, undef ,.1); #sleep for .1 second
+
+    my @ready = $self->{Select}->can_read(.1);
+    foreach my $fh (@ready){
+        sysread( $fh, $pack, 2048, length( $pack || '' ) );
+        my @packs = split("YMSG", $pack);
+	    shift @packs;
+	    foreach my $i (@packs) {
+	        (   $in->{Version},
+	            $in->{Length},
+	            $in->{ServiceCode},
+	            $in->{Status},
+	            $in->{SessionID},$data
+	        ) = unpack("nNnN2a*",$i);
+	        my %dat = split("\xC0\x80", $data);
+	        $in->{data} = \%dat;
+            $pack = Net::Yahoo::Util::make_hex($pack);
+            print colored(Dumper($in), 'red'), "\n" if($self->{TXRXDump});
+            print colored($pack, 'red'), "\n" if($self->{ShowRX});
+	    }
+        $pack = "";
+    }
+
 }
 
 
@@ -218,17 +271,34 @@ sub setHandlers
 
 sub call_event
 {
-        my $self = shift;
-        my $receiver = shift;
-        my $event = shift;
-        # get and run the handler if it is defined
-        my $function = $self->{handler}->{$event};
-        return &$function( $receiver, @_ ) if( defined $function );
-        # get and run the default handler if it is defined
-        $function = $self->{handler}->{Default};
-        return &$function( $receiver, $event, @_ ) if( defined $function );
-        return undef;
+	my $self = shift;
+	my $receiver = shift;
+	my $event = shift;
+	# get and run the handler if it is defined
+	my $function = $self->{handler}->{$event};
+	return &$function( $receiver, @_ ) if( defined $function );
+	# get and run the default handler if it is defined
+	$function = $self->{handler}->{Default};
+	return &$function( $receiver, $event, @_ ) if( defined $function );
+	return undef;
 }
 
-return 1;
+sub send_packet{
+	my $self = shift;
+    my $packet = shift;
+    print colored(Dumper($packet), 'green'), "\n" if($self->{TXRXDump});
+
+    my $pack = pack("a4nNnN2",
+    		"YMSG",
+            $packet->{Version},
+            length($packet->{data}),
+            $packet->{ServiceCode},
+            $packet->{Status},
+            $packet->{SessionID}).$packet->{data};
+    $self->{socket}->print($pack);
+    $pack = Net::Yahoo::Util::make_hex($pack);
+    print colored("$pack", 'green'), "\n" if($self->{ShowTX});
+}
+
+1;
 __DATA__
