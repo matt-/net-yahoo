@@ -60,6 +60,7 @@ sub new
 	    Debug         => 0,
 	    ShowTX        => 0,
 	    ShowRX        => 0,
+	    TXRXDump      => 0,
 	    AutoReconnect => 1,
 	    Select        => new IO::Select(),
 	    Notification  => undef,
