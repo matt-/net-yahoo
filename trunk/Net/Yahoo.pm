@@ -88,6 +88,7 @@ sub new
 	    Connected     => 0,
         Auth          => new Net::Yahoo::Auth(),
         SessionId     => 48,
+        LastPing      => time() + 60,
 	    @_
 	};
 	bless( $self, $class );
@@ -221,15 +222,31 @@ sub do_one_loop
     # return immediately if we are not connected
 	return if( !$self->{Connected} );
 
-    select ( undef, undef, undef ,.1); #sleep for .1 second
+    select ( undef, undef, undef ,.1); #sleep for .1 second to prevent CPU spikes
 
+    # send a ping every 60 seconds.
+    if(time() > ($self->{LastPing}+60)){
+        $self->send_packet({
+	        'Status' => 0,
+	        'SessionID' => $self->{SessionId},
+	        'Version' => 12,
+	        'ServiceCode' => 138,
+	        'data' => {0 => $self->{Handle}}
+	    });
+	    $self->{LastPing} = time();
+    }
+
+    # get all packets wiht data into an array
     my @ready = $self->{Select}->can_read(.1);
     foreach my $fh (@ready){
+        #read the packet
         sysread( $fh, $pack, 2048, length( $pack || '' ) );
+        #more than one YMSG packet could be in ecah packet
         my @packs = split("YMSG", $pack);
 	    shift @packs;
 	    foreach my $i (@packs) {
-	        (   $in->{Version},
+            # unpack YMSG headers
+            (   $in->{Version},
 	            $in->{Length},
 	            $in->{ServiceCode},
 	            $in->{Status},
@@ -237,29 +254,22 @@ sub do_one_loop
 	        ) = unpack("nNnN2a*",$i);
 	        my %dat = split("\xC0\x80", $data);
 	        $in->{data} = \%dat;
+            # make pritty hex for debug
             $pack = Net::Yahoo::Util::make_hex($pack);
             $in->{Service} = $Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}}->{service};
-
             $self->{SessionId} = $in->{SessionID};
-
             print colored(Dumper($in), 'red'), "\n" if($self->{TXRXDump});
             print colored($pack, 'red'), "\n" if($self->{ShowRX});
+
+            # if known service call the service function
             if($Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}})
             {
             	my $function = $Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}}->{action};
             	&$function($self, $in) if($function);
             }
-            #&{}($self, $in);
 	    }
         $pack = "";
     }
-
-}
-
-sub Serivecs
-{
-	my $self = shift;
-    my $packet = shift;
 
 }
 
