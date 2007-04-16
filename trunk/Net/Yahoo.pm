@@ -15,12 +15,32 @@ use Data::Dumper;
 use IO::Select;
 use IO::Socket::INET;
 
-# coloring for console
+# coloring for console for debug options
 use Term::ANSIColor;
 $Term::ANSIColor::AUTORESET = 1;
 require Win32::Console::ANSI if($^O eq "MSWin32");
 
 use Net::Yahoo::Util;
+use Net::Yahoo::Services;
+use Net::Yahoo::Auth;
+
+
+# Status Codes
+use constant YAHOO_STATUS_AVAILABLE    => 0;
+use constant YAHOO_STATUS_BRB          => 1;
+use constant YAHOO_STATUS_BUSY         => 2;
+use constant YAHOO_STATUS_NOTATHOME    => 3;
+use constant YAHOO_STATUS_NOTATDESK    => 4;
+use constant YAHOO_STATUS_NOTINOFFICE  => 5;
+use constant YAHOO_STATUS_ONPHONE      => 6;
+use constant YAHOO_STATUS_ONVACATION   => 7;
+use constant YAHOO_STATUS_OUTTOLUNCH   => 8;
+use constant YAHOO_STATUS_STEPPEDOUT   => 9;
+use constant YAHOO_STATUS_INVISIBLE    => 12;
+use constant YAHOO_STATUS_CUSTOM       => 99;
+use constant YAHOO_STATUS_IDLE         => 999;
+use constant YAHOO_STATUS_OFFLINE      => 0x5a55aa56;
+use constant YAHOO_STATUS_TYPING       => 0x16;
 
 
 # this is the seporator used in yahoo packets
@@ -66,6 +86,8 @@ sub new
 	    Notification  => undef,
 	    Connections   => {},
 	    Connected     => 0,
+        Auth          => new Net::Yahoo::Auth(),
+        SessionId     => 48,
 	    @_
 	};
 	bless( $self, $class );
@@ -129,10 +151,10 @@ sub connect
 
 	$self->send_packet({
     		'Status' => 0,
-	        'SessionID' => 48,
+	        'SessionID' => $self->{SessionId},
 	        'Version' => 12,
 	        'ServiceCode' => 76,
-	        'data' => ''
+	        'data' => {}
 	    });
 
     #$self->call_event( $self, 'connected', $self->{Connected});
@@ -216,11 +238,28 @@ sub do_one_loop
 	        my %dat = split("\xC0\x80", $data);
 	        $in->{data} = \%dat;
             $pack = Net::Yahoo::Util::make_hex($pack);
+            $in->{Service} = $Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}}->{service};
+
+            $self->{SessionId} = $in->{SessionID};
+
             print colored(Dumper($in), 'red'), "\n" if($self->{TXRXDump});
             print colored($pack, 'red'), "\n" if($self->{ShowRX});
+            if($Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}})
+            {
+            	my $function = $Net::Yahoo::Services::yahoo_serivces->{$in->{ServiceCode}}->{action};
+            	&$function($self, $in) if($function);
+            }
+            #&{}($self, $in);
 	    }
         $pack = "";
     }
+
+}
+
+sub Serivecs
+{
+	my $self = shift;
+    my $packet = shift;
 
 }
 
@@ -288,6 +327,8 @@ sub send_packet{
 	my $self = shift;
     my $packet = shift;
     print colored(Dumper($packet), 'green'), "\n" if($self->{TXRXDump});
+
+    $packet->{data} = (%{$packet->{data}})?join("\xC0\x80",%{$packet->{data}})."\xC0\x80":'';
 
     my $pack = pack("a4nNnN2",
     		"YMSG",
