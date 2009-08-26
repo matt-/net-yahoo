@@ -73,7 +73,7 @@ sub new
 
 	my $self  =
 	{
-	    Host          => 'cs1.msg.dcn.yahoo.com',
+	    Host          => 'cs101.msg.sp1.yahoo.com',
 	    Port          => 5050,
 	    Handle        => '',
 	    Password      => '',
